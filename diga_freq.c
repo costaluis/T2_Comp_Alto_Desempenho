@@ -14,6 +14,7 @@ Thiago Daniel Cagnoni de Pauli - 10716629
 #include <stdio.h>
 #include <stdlib.h>
 #include <omp.h>
+#include <mpi.h>
 #include <string.h>
 
 //Definição de constantes
