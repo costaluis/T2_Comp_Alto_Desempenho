@@ -31,8 +31,8 @@ typedef struct charfreq
 //Lista encadeada de linhas lidas e vetores de frequência
 typedef struct list
 {
-    charfreq *vector;
-    char *line;
+    charfreq vector[96];
+    char line[1000];
     struct list *next;
 } list;
 
@@ -43,8 +43,6 @@ void free_memory(list *aux)
     {
         free_memory(aux->next);
     }
-    free(aux->line);
-    free(aux->vector);
     free(aux);
 }
 
@@ -81,12 +79,21 @@ void count_freq(list *elem)
 }
 
 //Função principal
-int main()
+int main(int argc, char * argv[])
 {
     //Declaração de variáveis
     list *prev;
     charfreq *vec_freq;
     list *lines_list = (list *)malloc(sizeof(list));
+    list ** lines_vector;
+
+    int lines_number=0;
+    int rank, size, i;
+
+    int rec_size, rec_size_resto;
+    int *vetor_sizes, *vetor_dsp;
+    list *vetor_env, *vetor_rec;
+
     //Verificação de alocação
     if (lines_list == NULL)
     {
@@ -95,6 +102,7 @@ int main()
     }
     list *aux = lines_list;
 
+    /*
     char *line = (char *)malloc(TAM_LINE * sizeof(char));
     //Verificação de alocação
     if (line == NULL)
@@ -102,17 +110,19 @@ int main()
         printf("Falha na alocacao de memoria\n");
         return 1;
     }
+    */
 
     //Variável para realizar contagem do tempo de execução
     double time;
 
     //Rotina de leitura das linhas
     //Realiza leitura até que encontre EOF
-    while (fgets(line, TAM_LINE, stdin))
+    while (fgets(aux->line, TAM_LINE, stdin))
     {
         //Realiza alocação da linha lida em um elemento da lista encadeada
-        aux->line = line;
+        //aux->line = line;
 
+        /*
         //Aloca um vetor de frequências na memória
         vec_freq = (charfreq *)malloc(NUM_CHARS * sizeof(charfreq));
 
@@ -122,16 +132,17 @@ int main()
             printf("Falha na alocacao de memoria\n");
             exit(1);
         }
+        */
 
         //Seta os códigos e a frequência inicial dos caracteres
         for (int i = 0; i < NUM_CHARS; i++)
         {
-            vec_freq[i].code = i + 32;
-            vec_freq[i].freq = 0;
+            aux->vector[i].code = i + 32;
+            aux->vector[i].freq = 0;
         }
 
         //Aloca o vetor de frequências no elemento da lista encadeada
-        aux->vector = vec_freq;
+        //aux->vector = vec_freq;
 
         //Chamada da diretiva task
         //Define uma tarefa que será executada pelas threads disponíveis
@@ -153,26 +164,28 @@ int main()
         //Avança o nó da lista encadeada
         aux = aux->next;
 
-        //Aloca um novo vetor de caracteres para armazenar uma nova linha
-        line = (char *)malloc(TAM_LINE * sizeof(char));
-
-        //Verificação de alocação
-        if (line == NULL)
-        {
-            printf("Falha na alocacao de memoria\n");
-            exit(1);
-        }
     }
 
     //Algoritmo chega aqui quando lê EOF
     //Desaloca o vetor de caracteres que não será utilizado
-    free(line);
+    //free(line);
 
     //Desaloca o nó que não será utilizado
     free(prev->next);
 
     //Seta o último nó da lista encadeada como NULL
     prev->next = NULL;
+
+    aux = lines_list;
+
+    while (aux!=NULL)
+    {   
+        printf("%s",aux->line);
+        lines_number++;
+        aux = aux->next;
+    }
+    
+/*
 
     //omp_set_nested(1);
 
@@ -207,7 +220,7 @@ int main()
     //Realiza a coleta de tempo de execução
     //O tempo de execução é medido sem considerar tempo de impressão
     time = omp_get_wtime() - time;
-/*
+
     //Seta a variável temporária de volta à cabeça da lista encadeada para percorrê-la
     aux = lines_list;
 
@@ -232,10 +245,12 @@ int main()
             printf("\n");
         }
     }
-*/
+
     //Impressão do tempo de execução
     printf("\n%.10lf\n", time);
-
+    */
     //Chamada da rotina que libera a memória alocada na lista encadeada
     free_memory(lines_list);
+
+
 }
