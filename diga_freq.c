@@ -17,7 +17,6 @@ Thiago Daniel Cagnoni de Pauli - 10716629
 #include <string.h>
 #include <omp.h>
 
-
 //Definição de constantes
 #define TAM_LINE 1002
 #define NUM_CHARS 96
@@ -30,7 +29,7 @@ typedef struct charfreq
     int code, freq;
 } charfreq;
 
-//Lista encadeada de linhas lidas e vetores de frequência
+//Lista responsável por armazenar as linhas junto de seus respectivos vetores de frequência
 typedef struct list
 {
     charfreq vector[NUM_CHARS];
@@ -55,12 +54,15 @@ void count_freq(list *elem)
 {
     int tam = strlen(elem->line);
 
+    // Cria duas threads para processar a linha, cada thread receberá metade do tamanho da linha
     #pragma omp parallel for num_threads(T) 
     for (int i = 0; i < tam; i++){
+        // Indica que a operação de soma deve ser feita de forma atômica, evitando que uma posição
+        // seja alterada por duas threads ao mesmo tempo
         #pragma omp atomic
         elem->vector[elem->line[i] - 32].freq++;
     }
-
+    // Ordena o vetor de frequências
     qsort(elem->vector, NUM_CHARS, sizeof(charfreq), compare);
 }
 
@@ -69,13 +71,16 @@ int main(int argc, char * argv[])
 {
     int provided, rank, size, i, ret, root=0;
 
+    // Inicia o MPI indicando a utilização de threads com OMP
     MPI_Init_thread(&argc, &argv, MPI_THREAD_MULTIPLE, &provided);
 
+    // Se não estiver disponível a utilização de múltiplas threads, encerra o processo
     if(provided != MPI_THREAD_MULTIPLE){
         printf("Problema na criacao das threads\n");
         return 1;
     }
     
+    // Obtém o rank do processo e o size
     MPI_Comm_size(MPI_COMM_WORLD, &size);
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
 
@@ -86,7 +91,7 @@ int main(int argc, char * argv[])
     list * lines_vector;
     list * aux;
 
-    int lines_number, tam;
+    int lines_number, tam, x;
 
     int rec_size, rec_size_resto;
     int *vetor_sizes, *vetor_dsp;
@@ -120,8 +125,10 @@ int main(int argc, char * argv[])
     MPI_Type_create_struct(nitems_list, blocklenghts_list, offsets_list, types_list, &mpi_list);
     MPI_Type_commit(&mpi_list);
 
+    // Aloca o vetor de linhas e frequências que serão lidas e calculadas
     lines_list = (list*) malloc(NUMBER_LINES_MAX * sizeof(list));
 
+    // Apenas o processo 0 executa esse trecho
     if(rank == 0){
 
         //Verificação de alocação
@@ -130,10 +137,8 @@ int main(int argc, char * argv[])
             printf("Falha na alocacao de memoria\n");
             return 1;
         }
-
-        //Variável para realizar contagem do tempo de execução
         
-
+        // Ininia o número de linhas lidas em 0
         lines_number = 0;
 
 
@@ -141,11 +146,12 @@ int main(int argc, char * argv[])
         //Realiza leitura até que encontre EOF
         while ((fgets(lines_list[lines_number].line, TAM_LINE, stdin)))
         {
-            //printf("Rank: %d Line: %s\n", rank, lines_list[lines_number].line);
-            int x = strcspn(lines_list[lines_number].line, "\n");
+            // Verifica e remove o '\n' do fim da linha, caso exista
+            x = strcspn(lines_list[lines_number].line, "\n");
             if(x != strlen(lines_list[lines_number].line)){
                 lines_list[lines_number].line[x-1] = 0;
             }
+
             //Seta os códigos e a frequência inicial dos caracteres
             for (int i = 0; i < NUM_CHARS; i++)
             {
@@ -153,44 +159,46 @@ int main(int argc, char * argv[])
                 lines_list[lines_number].vector[i].freq = 0;
             }
 
-            //Chamada da diretiva task
-            //Define uma tarefa que será executada pelas threads disponíveis
-            //Cada thread executará o cálculo de frequência de uma linha por vez
-
+            // Incrementa um no número de linhas
             lines_number++;
 
         }
 
     }
 
+    // Processo 0 inicia a contagem do tempo
     if(rank == 0){
         time = omp_get_wtime();
     }
 
+    // Realiza um broadcast com o número de linhas lidas
     MPI_Bcast(&lines_number, 1, MPI_INT, 0, MPI_COMM_WORLD);
-    MPI_Barrier(MPI_COMM_WORLD);
-
   
+    // Cálculo do tamanho dos vetores de recebimento
+    // Caso não número de linhas seja não múltiplo do número de processos
+    // o resto é alocado para o último processo
     rec_size = lines_number / size;
     rec_size_resto= rec_size + lines_number % size;
 
+    // Aloca os vetores de recebimento, offsets e tamanhos
     vetor_rec = (list*) malloc((rec_size_resto)*sizeof(list));
     vetor_dsp = (int*) malloc(size*sizeof(int));
     vetor_sizes= (int*) malloc(size*sizeof(int));
     
-  
+    // Atribui os valores calculados para os vetores
     for(i=0;i<(size-1);i++){
-        vetor_sizes[i]=rec_size; // amount of items in this slot
-        vetor_dsp[i]=i*rec_size; // shift in relation to start address
+        vetor_sizes[i]=rec_size; 
+        vetor_dsp[i]=i*rec_size; 
     }
     vetor_sizes[size-1]=rec_size_resto;
     vetor_dsp[size-1]=i*rec_size;
 
-
-    MPI_Barrier(MPI_COMM_WORLD);
+    // Realiza o espalhamento das linhas lidas para os processos
     MPI_Scatterv (lines_list,vetor_sizes,vetor_dsp,mpi_list,vetor_rec,rec_size_resto,mpi_list,root,MPI_COMM_WORLD);
-    MPI_Barrier(MPI_COMM_WORLD);
 
+    // Compara o processo que está, já que o último possui mais linhas para processar
+    // Para cada linha recebida
+        // Chama função de cálculo das frequências
     if(rank != (size-1)){
         for(int i=0; i<rec_size; i++){
             count_freq(&(vetor_rec[i]));
@@ -202,33 +210,36 @@ int main(int argc, char * argv[])
         }
         rec_size = rec_size_resto;
     }
-    MPI_Barrier(MPI_COMM_WORLD);
 
-
+    // Reune todos as linhas processadas por cada processo em um único vetor do processo 0
     MPI_Gatherv(vetor_rec,rec_size,mpi_list,lines_list,vetor_sizes,vetor_dsp,mpi_list,root,MPI_COMM_WORLD);
-    MPI_Barrier(MPI_COMM_WORLD);
- 
     
     if(rank == 0){
+        // Processamento terminado, coleta de tempo gasto e impressão
+        time = omp_get_wtime() - time;
+
+        // Print da saída
         for(int i=0; i<lines_number; i++){
             for(int j=0; j<NUM_CHARS; j++){
                 printf("%d %d\n", lines_list[i].vector[j].code, lines_list[i].vector[j].freq);
             }
             printf("\n");
         }
+
+        // Impressão do tempo
+        //printf("Tempo gasto: %.10lf\n",time);
     }
+
     
+    //Desaloca a memória utilizada
+    free(lines_list);
+    free(vetor_rec);
+    free(vetor_dsp);
+    free(vetor_sizes);
 
-    if(rank==0){
-        time = omp_get_wtime() - time;
-        //printf("Tempo gasto: %.10lf",time);
-    }
-
+    // Finaliza os processos
     ret = MPI_Finalize();
 
-    //Chamada da rotina que libera a memória alocada na lista encadeada
-    free(lines_list);
-        
     return(0);
 
 }
