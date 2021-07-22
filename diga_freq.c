@@ -22,7 +22,7 @@ Thiago Daniel Cagnoni de Pauli - 10716629
 #define TAM_LINE 1002
 #define NUM_CHARS 96
 #define T 2
-#define NUMBER_LINES_MAX 15000
+#define NUMBER_LINES_MAX 200000
 
 //Estrutura de dados responsável por armazenar frequência de caracteres
 typedef struct charfreq
@@ -55,8 +55,9 @@ void count_freq(list *elem)
 {
     int tam = strlen(elem->line);
 
-    #pragma omp simd 
+    #pragma omp parallel for num_threads(T) 
     for (int i = 0; i < tam; i++){
+        #pragma omp atomic
         elem->vector[elem->line[i] - 32].freq++;
     }
 
@@ -81,7 +82,7 @@ int main(int argc, char * argv[])
     //Declaração de variáveis
     list *prev;
     charfreq *vec_freq;
-    list *lines_list = (list *)malloc(NUMBER_LINES_MAX * sizeof(list));
+    list *lines_list;
     list * lines_vector;
     list * aux;
 
@@ -91,7 +92,8 @@ int main(int argc, char * argv[])
     int *vetor_sizes, *vetor_dsp;
     list *vetor_env, *vetor_rec;
 
-    
+    double time;
+
      // Cria um tipo MPI para a struct charfreq 
     const int nitems_char_freq=2;
     int blocklenghts_char_freq[2] = {1,1};
@@ -118,6 +120,8 @@ int main(int argc, char * argv[])
     MPI_Type_create_struct(nitems_list, blocklenghts_list, offsets_list, types_list, &mpi_list);
     MPI_Type_commit(&mpi_list);
 
+    lines_list = (list*) malloc(NUMBER_LINES_MAX * sizeof(list));
+
     if(rank == 0){
 
         //Verificação de alocação
@@ -128,7 +132,7 @@ int main(int argc, char * argv[])
         }
 
         //Variável para realizar contagem do tempo de execução
-        double time;
+        
 
         lines_number = 0;
 
@@ -138,7 +142,10 @@ int main(int argc, char * argv[])
         while ((fgets(lines_list[lines_number].line, TAM_LINE, stdin)))
         {
             //printf("Rank: %d Line: %s\n", rank, lines_list[lines_number].line);
-
+            int x = strcspn(lines_list[lines_number].line, "\n");
+            if(x != strlen(lines_list[lines_number].line)){
+                lines_list[lines_number].line[x-1] = 0;
+            }
             //Seta os códigos e a frequência inicial dos caracteres
             for (int i = 0; i < NUM_CHARS; i++)
             {
@@ -156,6 +163,10 @@ int main(int argc, char * argv[])
 
     }
 
+    if(rank == 0){
+        time = omp_get_wtime();
+    }
+
     MPI_Bcast(&lines_number, 1, MPI_INT, 0, MPI_COMM_WORLD);
     MPI_Barrier(MPI_COMM_WORLD);
 
@@ -167,41 +178,27 @@ int main(int argc, char * argv[])
     vetor_dsp = (int*) malloc(size*sizeof(int));
     vetor_sizes= (int*) malloc(size*sizeof(int));
     
-    if(rank==0)
-    {
-        for(i=0;i<(size-1);i++){
-            vetor_sizes[i]=rec_size; // amount of items in this slot
-            vetor_dsp[i]=i*rec_size; // shift in relation to start address
-        }
-        vetor_sizes[size-1]=rec_size_resto;
-        vetor_dsp[size-1]=i*rec_size;
+  
+    for(i=0;i<(size-1);i++){
+        vetor_sizes[i]=rec_size; // amount of items in this slot
+        vetor_dsp[i]=i*rec_size; // shift in relation to start address
     }
+    vetor_sizes[size-1]=rec_size_resto;
+    vetor_dsp[size-1]=i*rec_size;
 
+
+    MPI_Barrier(MPI_COMM_WORLD);
     MPI_Scatterv (lines_list,vetor_sizes,vetor_dsp,mpi_list,vetor_rec,rec_size_resto,mpi_list,root,MPI_COMM_WORLD);
     MPI_Barrier(MPI_COMM_WORLD);
 
-
-
     if(rank != (size-1)){
         for(int i=0; i<rec_size; i++){
-            tam = strlen(vetor_rec[i].line);
-            
-            //#pragma omp parallel for num_threads(T) private(i, j) 
-            for (int j = 0; j < tam; j++){
-                vetor_rec[i].vector[vetor_rec[i].line[j] - 32].freq++;
-            }
-            qsort(vetor_rec[i].vector, NUM_CHARS, sizeof(charfreq), compare);
+            count_freq(&(vetor_rec[i]));
         }
 
     }else{
         for(int i=0; i<rec_size_resto; i++){
-            //count_freq(&(vetor_rec[i]));
-            tam = strlen(vetor_rec[i].line);
-            //#pragma omp parallel for num_threads(T) private(i) first_private(tam, j)
-            for (int j = 0; j < tam; j++){
-                vetor_rec[i].vector[vetor_rec[i].line[j] - 32].freq++;
-            }
-            qsort(vetor_rec[i].vector, NUM_CHARS, sizeof(charfreq), compare);
+            count_freq(&(vetor_rec[i]));
         }
         rec_size = rec_size_resto;
     }
@@ -210,8 +207,7 @@ int main(int argc, char * argv[])
 
     MPI_Gatherv(vetor_rec,rec_size,mpi_list,lines_list,vetor_sizes,vetor_dsp,mpi_list,root,MPI_COMM_WORLD);
     MPI_Barrier(MPI_COMM_WORLD);
-
-
+ 
     
     if(rank == 0){
         for(int i=0; i<lines_number; i++){
@@ -222,6 +218,12 @@ int main(int argc, char * argv[])
         }
     }
     
+
+    if(rank==0){
+        time = omp_get_wtime() - time;
+        //printf("Tempo gasto: %.10lf",time);
+    }
+
     ret = MPI_Finalize();
 
     //Chamada da rotina que libera a memória alocada na lista encadeada
