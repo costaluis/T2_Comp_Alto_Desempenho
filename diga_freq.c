@@ -43,9 +43,11 @@ int compare(const void *p1, const void *p2)
     charfreq *cf1 = (charfreq *)p1;
     charfreq *cf2 = (charfreq *)p2;
 
+    // Ordena por frequência
     if (cf1->freq != cf2->freq)
         return cf1->freq - cf2->freq;
 
+    // Em caso de empate, ordena por código ASCII
     return cf2->code - cf1->code;
 }
 
