@@ -13,14 +13,16 @@ Thiago Daniel Cagnoni de Pauli - 10716629
 //Includes bibliotecas
 #include <stdio.h>
 #include <stdlib.h>
-#include <omp.h>
 #include <mpi.h>
 #include <string.h>
+#include <omp.h>
+
 
 //Definição de constantes
 #define TAM_LINE 1002
 #define NUM_CHARS 96
-#define T 8
+#define T 2
+#define NUMBER_LINES_MAX 15000
 
 //Estrutura de dados responsável por armazenar frequência de caracteres
 typedef struct charfreq
@@ -31,20 +33,10 @@ typedef struct charfreq
 //Lista encadeada de linhas lidas e vetores de frequência
 typedef struct list
 {
-    charfreq vector[96];
-    char line[1000];
-    struct list *next;
+    charfreq vector[NUM_CHARS];
+    char line[TAM_LINE];
 } list;
 
-//Função de liberação de memória
-void free_memory(list *aux)
-{
-    if (aux->next)
-    {
-        free_memory(aux->next);
-    }
-    free(aux);
-}
 
 //Função de comparação utilizada no qsort
 int compare(const void *p1, const void *p2)
@@ -61,17 +53,10 @@ int compare(const void *p1, const void *p2)
 //Função responsável por realizar contagem do número de caracteres
 void count_freq(list *elem)
 {
-    //int tam = strlen(elem->line);
+    int tam = strlen(elem->line);
 
-    //#pragma omp simd 
-    for (int i = 0; i < TAM_LINE; i++)
-    {
-        
-        if (elem->line[i] == '\n' || elem->line[i] == '\0')
-        {
-            break;
-        }
-        
+    #pragma omp simd 
+    for (int i = 0; i < tam; i++){
         elem->vector[elem->line[i] - 32].freq++;
     }
 
@@ -81,176 +66,167 @@ void count_freq(list *elem)
 //Função principal
 int main(int argc, char * argv[])
 {
+    int provided, rank, size, i, ret, root=0;
+
+    MPI_Init_thread(&argc, &argv, MPI_THREAD_MULTIPLE, &provided);
+
+    if(provided != MPI_THREAD_MULTIPLE){
+        printf("Problema na criacao das threads\n");
+        return 1;
+    }
+    
+    MPI_Comm_size(MPI_COMM_WORLD, &size);
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+
     //Declaração de variáveis
     list *prev;
     charfreq *vec_freq;
-    list *lines_list = (list *)malloc(sizeof(list));
-    list ** lines_vector;
+    list *lines_list = (list *)malloc(NUMBER_LINES_MAX * sizeof(list));
+    list * lines_vector;
+    list * aux;
 
-    int lines_number=0;
-    int rank, size, i;
+    int lines_number, tam;
 
     int rec_size, rec_size_resto;
     int *vetor_sizes, *vetor_dsp;
     list *vetor_env, *vetor_rec;
 
-    //Verificação de alocação
-    if (lines_list == NULL)
-    {
-        printf("Falha na alocacao de memoria\n");
-        return 1;
-    }
-    list *aux = lines_list;
-
-    /*
-    char *line = (char *)malloc(TAM_LINE * sizeof(char));
-    //Verificação de alocação
-    if (line == NULL)
-    {
-        printf("Falha na alocacao de memoria\n");
-        return 1;
-    }
-    */
-
-    //Variável para realizar contagem do tempo de execução
-    double time;
-
-    //Rotina de leitura das linhas
-    //Realiza leitura até que encontre EOF
-    while (fgets(aux->line, TAM_LINE, stdin))
-    {
-        //Realiza alocação da linha lida em um elemento da lista encadeada
-        //aux->line = line;
-
-        /*
-        //Aloca um vetor de frequências na memória
-        vec_freq = (charfreq *)malloc(NUM_CHARS * sizeof(charfreq));
-
-        //Verificação de alocação
-        if (vec_freq == NULL)
-        {
-            printf("Falha na alocacao de memoria\n");
-            exit(1);
-        }
-        */
-
-        //Seta os códigos e a frequência inicial dos caracteres
-        for (int i = 0; i < NUM_CHARS; i++)
-        {
-            aux->vector[i].code = i + 32;
-            aux->vector[i].freq = 0;
-        }
-
-        //Aloca o vetor de frequências no elemento da lista encadeada
-        //aux->vector = vec_freq;
-
-        //Chamada da diretiva task
-        //Define uma tarefa que será executada pelas threads disponíveis
-        //Cada thread executará o cálculo de frequência de uma linha por vez
-
-        //Aloca memória para o próximo nó da lista encadeada
-        aux->next = (list *)malloc(sizeof(list));
-
-        //Verificação de alocação
-        if (aux->next == NULL)
-        {
-            printf("Falha na alocacao de memoria\n");
-            exit(1);
-        }
-
-        //Armazena o nó anterior da lista encadeada
-        prev = aux;
-
-        //Avança o nó da lista encadeada
-        aux = aux->next;
-
-    }
-
-    //Algoritmo chega aqui quando lê EOF
-    //Desaloca o vetor de caracteres que não será utilizado
-    //free(line);
-
-    //Desaloca o nó que não será utilizado
-    free(prev->next);
-
-    //Seta o último nó da lista encadeada como NULL
-    prev->next = NULL;
-
-    aux = lines_list;
-
-    while (aux!=NULL)
-    {   
-        printf("%s",aux->line);
-        lines_number++;
-        aux = aux->next;
-    }
     
-/*
+     // Cria um tipo MPI para a struct charfreq 
+    const int nitems_char_freq=2;
+    int blocklenghts_char_freq[2] = {1,1};
+    MPI_Datatype types_char_freq[2] = {MPI_INT, MPI_INT};
+    MPI_Datatype mpi_char_freq;
+    MPI_Aint     offsets_char_freq[2];
 
-    //omp_set_nested(1);
+    offsets_char_freq[0] = offsetof(charfreq, code);
+    offsets_char_freq[1] = offsetof(charfreq, freq);
 
-    //Início da região paralela
-    #pragma omp parallel num_threads(T)
-    {
-        //Início da região single - Executado por uma única thread
-        #pragma omp single
+    MPI_Type_create_struct(nitems_char_freq, blocklenghts_char_freq, offsets_char_freq, types_char_freq, &mpi_char_freq);
+    MPI_Type_commit(&mpi_char_freq);
+
+    // Cria um tipo MPI para a struct charfreq 
+    const int nitems_list=2;
+    int blocklenghts_list[2] = {NUM_CHARS,TAM_LINE};
+    MPI_Datatype types_list[2] = {mpi_char_freq, MPI_CHAR};
+    MPI_Datatype mpi_list;
+    MPI_Aint     offsets_list[2];
+
+    offsets_list[0] = offsetof(list, vector);
+    offsets_list[1] = offsetof(list, line);
+
+    MPI_Type_create_struct(nitems_list, blocklenghts_list, offsets_list, types_list, &mpi_list);
+    MPI_Type_commit(&mpi_list);
+
+    if(rank == 0){
+
+        //Verificação de alocação
+        if (lines_list == NULL)
         {
-            aux = lines_list;
-
-            //Início da contagem de tempo
-            time = omp_get_wtime();
-
-
-            //Percorre a lista encadeada, criando uma task para cada nó
-            //Cada nó possui uma linha e um vetor de frequência correspondente
-            while(aux != NULL)
-            {
-                //Diretiva task com firsprivate para garantir acesso à região de memória pela task
-                #pragma omp task firstprivate(aux)
-                {
-                //Chamada da função que será executada na task
-                count_freq(aux);
-                }
-                aux = aux->next;
-            }
-            
+            printf("Falha na alocacao de memoria\n");
+            return 1;
         }
+
+        //Variável para realizar contagem do tempo de execução
+        double time;
+
+        lines_number = 0;
+
+
+        //Rotina de leitura das linhas
+        //Realiza leitura até que encontre EOF
+        while ((fgets(lines_list[lines_number].line, TAM_LINE, stdin)))
+        {
+            //printf("Rank: %d Line: %s\n", rank, lines_list[lines_number].line);
+
+            //Seta os códigos e a frequência inicial dos caracteres
+            for (int i = 0; i < NUM_CHARS; i++)
+            {
+                lines_list[lines_number].vector[i].code = i + 32;
+                lines_list[lines_number].vector[i].freq = 0;
+            }
+
+            //Chamada da diretiva task
+            //Define uma tarefa que será executada pelas threads disponíveis
+            //Cada thread executará o cálculo de frequência de uma linha por vez
+
+            lines_number++;
+
+        }
+
     }
 
-    //Realiza a coleta de tempo de execução
-    //O tempo de execução é medido sem considerar tempo de impressão
-    time = omp_get_wtime() - time;
+    MPI_Bcast(&lines_number, 1, MPI_INT, 0, MPI_COMM_WORLD);
+    MPI_Barrier(MPI_COMM_WORLD);
 
-    //Seta a variável temporária de volta à cabeça da lista encadeada para percorrê-la
-    aux = lines_list;
+  
+    rec_size = lines_number / size;
+    rec_size_resto= rec_size + lines_number % size;
 
-    //Enquanto a lista encadeada não acabou
-    while (aux != NULL)
+    vetor_rec = (list*) malloc((rec_size_resto)*sizeof(list));
+    vetor_dsp = (int*) malloc(size*sizeof(int));
+    vetor_sizes= (int*) malloc(size*sizeof(int));
+    
+    if(rank==0)
     {
-        for (int i = 0; i < NUM_CHARS; i++)
-        {
-            //Realiza o print do código do caractere e sua frequência de aparição, caso ela não seja 0
-            if (aux->vector[i].freq)
-            {
-                printf("%d %d\n", aux->vector[i].code, aux->vector[i].freq);
+        for(i=0;i<(size-1);i++){
+            vetor_sizes[i]=rec_size; // amount of items in this slot
+            vetor_dsp[i]=i*rec_size; // shift in relation to start address
+        }
+        vetor_sizes[size-1]=rec_size_resto;
+        vetor_dsp[size-1]=i*rec_size;
+    }
+
+    MPI_Scatterv (lines_list,vetor_sizes,vetor_dsp,mpi_list,vetor_rec,rec_size_resto,mpi_list,root,MPI_COMM_WORLD);
+    MPI_Barrier(MPI_COMM_WORLD);
+
+
+
+    if(rank != (size-1)){
+        for(int i=0; i<rec_size; i++){
+            tam = strlen(vetor_rec[i].line);
+            
+            //#pragma omp parallel for num_threads(T) private(i, j) 
+            for (int j = 0; j < tam; j++){
+                vetor_rec[i].vector[vetor_rec[i].line[j] - 32].freq++;
             }
+            qsort(vetor_rec[i].vector, NUM_CHARS, sizeof(charfreq), compare);
         }
 
-        //Avança para o próximo nó
-        aux = aux->next;
+    }else{
+        for(int i=0; i<rec_size_resto; i++){
+            //count_freq(&(vetor_rec[i]));
+            tam = strlen(vetor_rec[i].line);
+            //#pragma omp parallel for num_threads(T) private(i) first_private(tam, j)
+            for (int j = 0; j < tam; j++){
+                vetor_rec[i].vector[vetor_rec[i].line[j] - 32].freq++;
+            }
+            qsort(vetor_rec[i].vector, NUM_CHARS, sizeof(charfreq), compare);
+        }
+        rec_size = rec_size_resto;
+    }
+    MPI_Barrier(MPI_COMM_WORLD);
 
-        //Verifica se não é a ultima linha para realizar a quebra de linha
-        if (aux)
-        {
+
+    MPI_Gatherv(vetor_rec,rec_size,mpi_list,lines_list,vetor_sizes,vetor_dsp,mpi_list,root,MPI_COMM_WORLD);
+    MPI_Barrier(MPI_COMM_WORLD);
+
+
+    
+    if(rank == 0){
+        for(int i=0; i<lines_number; i++){
+            for(int j=0; j<NUM_CHARS; j++){
+                printf("%d %d\n", lines_list[i].vector[j].code, lines_list[i].vector[j].freq);
+            }
             printf("\n");
         }
     }
+    
+    ret = MPI_Finalize();
 
-    //Impressão do tempo de execução
-    printf("\n%.10lf\n", time);
-    */
     //Chamada da rotina que libera a memória alocada na lista encadeada
-    free_memory(lines_list);
-
+    free(lines_list);
+        
+    return(0);
 
 }
