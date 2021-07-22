@@ -1,4 +1,4 @@
-/*Trabalho 01 - Computação de Alto Desempenho
+/*Trabalho 02 - Computação de Alto Desempenho
 
 Grupo 01
 
